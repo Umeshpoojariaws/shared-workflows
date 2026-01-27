@@ -1,0 +1,70 @@
+name: Reusable Build and Deploy
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        required: true
+        type: string
+      docker-repo-url:
+        required: true
+        type: string
+      gitops-repo:
+        required: true
+        type: string
+    secrets:
+      DOCKER_USERNAME:
+        required: true
+      DOCKER_PASSWORD:
+        required: true
+      GITOPS_PAT:
+        required: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Application Code
+        uses: actions/checkout@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Get Version and Git SHA
+        id: vars
+        run: |
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ inputs.docker-repo-url }}/${{ inputs.image-name }}:${{ steps.vars.outputs.sha }}
+            ${{ inputs.docker-repo-url }}/${{ inputs.image-name }}:${{ steps.vars.outputs.version }}
+
+      - name: Checkout GitOps Repository
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ inputs.gitops-repo }}
+          path: gke-gitops-infra
+          token: ${{ secrets.GITOPS_PAT }}
+
+      - name: Update Kustomize Image Tag for Dev
+        run: |
+          cd gke-gitops-infra/environments/dev
+          kustomize edit set image ${{ inputs.image-name }}=${{ inputs.docker-repo-url }}/${{ inputs.image-name }}:${{ steps.vars.outputs.version }}
+          cd ../..
+
+      - name: Commit and Push Changes
+        run: |
+          cd gke-gitops-infra
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions-bot@github.com"
+          git commit -am "ci(${{ inputs.image-name }}): Deploy version ${{ steps.vars.outputs.version }} to dev"
+          git push
