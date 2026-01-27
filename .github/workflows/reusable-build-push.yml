@@ -1,4 +1,4 @@
-name: Reusable GCR Build and Push
+name: Reusable Artifact Registry Build and Push
 
 on:
   workflow_call:
@@ -6,7 +6,7 @@ on:
       image-name:
         required: true
         type: string
-      gcp-project-id: # This was missing
+      artifact-registry-repo:
         required: true
         type: string
     secrets:
@@ -20,10 +20,14 @@ jobs:
       - name: Checkout Application Code
         uses: actions/checkout@v3
 
-      - name: Login to Google Container Registry (GCR)
+      - name: Extract Artifact Registry hostname
+        id: ar-host
+        run: echo "host=$(echo ${{ inputs.artifact-registry-repo }} | cut -d'/' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Login to Google Artifact Registry
         uses: docker/login-action@v2
         with:
-          registry: gcr.io
+          registry: ${{ steps.ar-host.outputs.host }}
           username: _json_key
           password: ${{ secrets.GCP_SA_KEY }}
 
@@ -33,11 +37,11 @@ jobs:
           echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
 
-      - name: Build and Push Docker Image to GCR
+      - name: Build and Push Docker Image to Artifact Registry
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
           tags: |
-            gcr.io/${{ inputs.gcp-project-id }}/${{ inputs.image-name }}:${{ steps.vars.outputs.sha }}
-            gcr.io/${{ inputs.gcp-project-id }}/${{ inputs.image-name }}:${{ steps.vars.outputs.version }}
+            ${{ inputs.artifact-registry-repo }}/${{ inputs.image-name }}:${{ steps.vars.outputs.sha }}
+            ${{ inputs.artifact-registry-repo }}/${{ inputs.image-name }}:${{ steps.vars.outputs.version }}
