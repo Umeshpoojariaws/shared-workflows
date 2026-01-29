@@ -25,11 +25,14 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.vars.outputs.version }}
-      sha: ${{ steps.vars.outputs.sha }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
-      - name: Checkout Application Code
+      - name: Checkout code
         uses: actions/checkout@v3
+
+      - name: Read version
+        id: version
+        run: echo "tag=$(cat VERSION)" >> $GITHUB_OUTPUT
 
       - name: Extract Artifact Registry hostname
         id: ar-host
@@ -71,16 +74,38 @@ jobs:
       - name: Update image tag in properties file
         run: |
           PROPERTIES_FILE="gitops/environments/${{ inputs.environment }}/image_tags.properties"
+          TAG_VALUE="${{ needs.build-and-push.outputs.tag }}"
+
+          echo "--- Debug Information ---"
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Image Name: ${{ inputs.image-name }}"
+          echo "Tag from build job: '${TAG_VALUE}'"
+          echo "Properties file path: ${PROPERTIES_FILE}"
+          echo "-------------------------"
+
           if [ ! -f "$PROPERTIES_FILE" ]; then
             echo "Error: Properties file not found at $PROPERTIES_FILE"
             exit 1
           fi
-          # Convert image-name to uppercase and construct the correct property key (e.g., BACKEND_TAG)
+
+          if [ -z "$TAG_VALUE" ]; then
+            echo "Error: Tag value from build job is empty. Aborting update."
+            exit 1
+          fi
+
           APP_NAME_UPPER=$(echo "${{ inputs.image-name }}" | tr '[:lower:]' '[:upper:]')
           PROPERTY_KEY="${APP_NAME_UPPER}_TAG"
+          echo "Constructed Property Key: ${PROPERTY_KEY}"
 
-          # Use sed to find and replace the image tag for the specific application
-          sed -i "s|^\(${PROPERTY_KEY}=\).*|\1${{ needs.build-and-push.outputs.tag }}|" "$PROPERTIES_FILE"
+          echo "--- Content of $PROPERTIES_FILE before update ---"
+          cat "$PROPERTIES_FILE"
+          echo "-------------------------------------------------"
+
+          sed -i "s|^\(${PROPERTY_KEY}=\).*|\1${TAG_VALUE}|" "$PROPERTIES_FILE"
+
+          echo "--- Content of $PROPERTIES_FILE after update ---"
+          cat "$PROPERTIES_FILE"
+          echo "------------------------------------------------"
 
       - name: Commit and push changes
         run: |
