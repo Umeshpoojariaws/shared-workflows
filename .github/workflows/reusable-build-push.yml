@@ -1,4 +1,4 @@
-name: Reusable Artifact Registry Build and Push
+name: Reusable Build, Push, and Deploy
 
 on:
   workflow_call:
@@ -9,13 +9,24 @@ on:
       artifact-registry-repo:
         required: true
         type: string
+      gitops-repo:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string # e.g., dev
     secrets:
       GCP_SA_KEY:
+        required: true
+      GITOPS_PAT:
         required: true
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      sha: ${{ steps.vars.outputs.sha }}
     steps:
       - name: Checkout Application Code
         uses: actions/checkout@v3
@@ -45,3 +56,32 @@ jobs:
           tags: |
             ${{ inputs.artifact-registry-repo }}/${{ inputs.image-name }}:${{ steps.vars.outputs.sha }}
             ${{ inputs.artifact-registry-repo }}/${{ inputs.image-name }}:${{ steps.vars.outputs.version }}
+
+  update-gitops:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitOps Repository
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ inputs.gitops-repo }}
+          token: ${{ secrets.GITOPS_PAT }}
+
+      - name: Install Kustomize
+        run: |-
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Update Image Tag in Kustomize
+        run: |
+          # This is the logic you described.
+          # It targets the centralized environment kustomization file.
+          cd environments/${{ inputs.environment }}
+          kustomize edit set image ${{ inputs.image-name }}=${{ inputs.artifact-registry-repo }}/${{ inputs.image-name }}:${{ needs.build-and-push.outputs.version }}
+
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git commit -am "ci: Update ${{ inputs.image-name }} image for ${{ inputs.environment }} to ${{ needs.build-and-push.outputs.version }}"
+          git push
